@@ -2,93 +2,118 @@ const express = require('express')
 const app = express()
 const path = require('path')
 const mysql = require('mysql')
+const dateFormat = require('dateformat');
 const APP_PORT = 5555
+
+// Database
+const dbConf = require('./config/db.js')
+const db = mysql.createConnection(dbConf)
+
+// Connect Database
+db.connect((err) => {
+  if (err) {
+    throw err;
+  }
+  console.log("DataBase Connected!");
+})
+
 const server = app.listen(APP_PORT, () => {
   console.log(`App running on port ${APP_PORT}`)
 })
-const con = mysql.createConnection({
-	host: "localhost",
-	user: "root",
-	password: "12345",
-	database: "chat_db"
-})
 
-const io = require('socket.io').listen(server)
+const io = require('socket.io').listen(server);
 
 function getTimeStamp() {
-        var now = new Date();
-        return  ((now.getFullYear()) + '-' + (((now.getMonth()+1) < 10) ? ("0" + (now.getMonth()+1)) : (now.getMonth()+1)) + '-' 
-        + ((now.getDate() < 10) ? ("0" + now.getDate()) : (now.getDate())) + " " 
-        + ((now.getHours() < 10) ? ("0" + now.getHours()) : (now.getHours())) + ':'
-        + ((now.getMinutes() < 10) ? ("0" + now.getMinutes()) : (now.getMinutes())) + ':' 
-        + ((now.getSeconds() < 10) ? ("0" + now.getSeconds()) : (now.getSeconds())) + '.'
-        + ((now.getMilliseconds() < 10 ) ? ("00" + now.getSeconds()) : 
-          (now.getMilliseconds() < 100 ) ? ("0" + now.getMilliseconds()):
-          (now.getMilliseconds())) 
-        );
+  let now = new Date();
+  let output = dateFormat(now, "yyyy-mm-dd hh:MM:ss.l");
+  return output;
 }
-// // ??????? ???????? express ????? render view ??????????? views
-// // ?????? template engine ???? pug
+
+/// View Engine
 app.set('views', path.join(__dirname, 'views'))
 app.set('view engine', 'pug')
+
+// Set Public Static Directory
 app.use(express.static('public'))
 
+// Router
 app.get('/', (req, res) => {
   res.render('index')
 })
 
-con.connect(function(err) {
-  if (err) throw err;
-  console.log("DataBase Connected!");
-})
-
 io.on('connection', (socket) => {
   console.log('a user connected')
-  socket.on('history',()=>{
+
+  /* Get History Request => Return History chat */
+  socket.on('getHistory', () => {
     console.log('show history') 
-    var history="SELECT uh.logouttime "+
-                "FROM   user_history uh "+
-                "WHERE  uh.username = 'name' ;"
-    con.query(history,function(err,result,field){
-                            if (err) throw err;
-                             console.log(result[0].logouttime)
-                             var hismes="SELECT ch.user,ch.message "+
-                                        "FROM   chat_history ch "+
-                                        "WHERE  ch.timestamp < '"+result[0].logouttime+"'; "
-                            con.query(hismes,function(err,result2,field2){
-                              if (err) throw err;
-                              for(var i = 0 ; i < result2.length ;i++){
-                                console.log(result2[i].user+" : "+result2[i].message)
-                                io.emit('history',result2[i].user+" : "+result2[i].message)
-                              }
-                              })
-                           })
+    
+    /* Find most recent logout time of user */
+    let historyQuery = "SELECT uh.logouttime " +
+                       "FROM   user_history uh " +
+                       "WHERE  uh.username = 'name' " +
+                       "ORDER BY uh.logouttime DESC " +
+                       "LIMIT 1; ";
+    
+    db.query(historyQuery, (err, user_history) => {
+      if (err) {
+        throw err;
+      }
+      console.log(user_history[0].logouttime)
+
+      /* Find all new chat message for user */
+      let newMessageQuery = "SELECT ch.user,ch.message " +
+                            "FROM   chat_history ch " +
+                            "WHERE  ch.timestamp < '" + user_history[0].logouttime + "'; ";
+
+      db.query(newMessageQuery, (err, newMessages) => {
+        if (err) {
+          throw err;
+        }
+        for (let i = 0 ; i < newMessages.length ;i++) {
+          console.log(newMessages[i].user + " : " + newMessages[i].message)
+          io.emit('receiveHistory',newMessages[i].user+" : "+newMessages[i].message)
+        }
+      })
+    })
   })
-  socket.on('chatter', (message) => {
-    var arr=message.split(":")
-    var timestamp=getTimeStamp()
-    var user=arr[0]
+
+  /* User send chat message => broadcast chat message to all user and store in Chat DB, Message Table */
+  socket.on('sendChatMessage', (message) => {
+    let arr = message.split(":");
+    let timestamp = getTimeStamp();
+    let user = arr[0];
     arr.shift();
-    var mes=arr.join(":");
+    let mes = arr.join(":");
+
     console.log('user : ', user)
     console.log('message : ', mes)
-    var history = "INSERT INTO chat_history(user,message,timestamp) "+
-		              "VALUE 	('"+user+"','" +mes+ "','"+timestamp+"');"
-    con.query(history,function (errt, result) {
-    if (errt) throw errt;
-    console.log("saved")
+
+    /* Store message in database */
+    let history = "INSERT INTO chat_history(user,message,timestamp) " +
+		              "VALUE 	('" + user + "','" + mes + "','" + timestamp + "');";
+    db.query(history, (err, result) => {
+      if (err) {
+        throw err;
+      }
+      console.log("saved")
     })
-    io.emit('chatter', user+" : "+mes )
+
+    /* Broadcast new Message to all users */
+    io.emit('broadcastChatMessage', user + " : " + mes)
   })
+
+  /* User Disconnects => Keep User Log in Chat DB, User History Table */
   socket.on('disconnect',() =>{
     console.log("logout ")
-    var timestamp=getTimeStamp()
+    var timestamp = getTimeStamp()
     var logout =  "UPDATE user_history "+
                   "SET logouttime='"+timestamp+"'"+
                   "WHERE username='name' ;"
-    con.query(logout,function(err,result){
+                  db.query(logout,function(err,result){
       if (err) throw err;
       console.log("saved logout")
     })
   })
 })
+
