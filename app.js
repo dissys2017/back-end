@@ -3,7 +3,6 @@ const app = express()
 const path = require('path')
 const mysql = require('mysql')
 const dateFormat = require('dateformat');
-const shortid = require('shortid');
 
 const APP_PORT = 5555
 
@@ -50,8 +49,15 @@ users = []
 io.on('connection', (socket) => {
   console.log('a user connected')
 
+  function logSocketMethodCall(name) {
+    let address = socket.conn.remoteAddress;
+    let logMessage = "\x1b[33m[" + getTimeStamp() + "]\x1b[0m \x1b[36m(user " + socket.uid + ")\x1b[0m \x1b[32m(" + address + ")\x1b[0m " + name;
+    console.log(logMessage);
+  }
+
   socket.on('login', (data) => {
-    console.log(getTimeStamp(), " user ", socket.uid, " login");
+    // console.log(getTimeStamp(), " user ", socket.uid, " login");
+    logSocketMethodCall("login");
 
     const findUserIdQuery = "SELECT uid FROM ChatsDB.users WHERE username = ? LIMIT 1;"
 
@@ -87,7 +93,7 @@ io.on('connection', (socket) => {
    * @param limit (optional, default 100) limit max messages returned by this call
   */
   socket.on('getPreviousMessages', (data) => {
-    console.log(getTimeStamp(), " user ", socket.uid, " getReadMessages");
+    logSocketMethodCall("getPreviousMessages");
     
 
     if (!data.gid) {
@@ -148,7 +154,8 @@ io.on('connection', (socket) => {
 
   /* User send chat message => broadcast chat message to all user and store in Chat DB, Message Table */
   socket.on('sendChatMessage', (data) => {
-    console.log(getTimeStamp(), " user ", socket.uid, " sendChatMessage");
+    logSocketMethodCall("sendChatMessage");
+
     let timestamp = getTimeStamp();
     
     const messageObj = {
@@ -190,8 +197,8 @@ io.on('connection', (socket) => {
 
   /* User Disconnects => Keep User Log in Chat DB, User History Table */
   socket.on('disconnect', () => {
-    
-    console.log(getTimeStamp(), " user ", socket.uid, " disconnect");
+    logSocketMethodCall("disconnect");
+
     const logoutQuery = "INSERT INTO users_logout " +
                         "SET ?;";
     
@@ -253,17 +260,18 @@ io.on('connection', (socket) => {
   }
 
   socket.on('getGroups', () => {
-    console.log(getTimeStamp(), " user ", socket.uid, " getGroups");
+    logSocketMethodCall("getGroups");
+
     refreshGroups(socket, db);
   });
 
   socket.on('joinGroup', (data) => {
-    console.log(getTimeStamp(), " user ", socket.uid, " joinGroup");
+    logSocketMethodCall("joinGroup");
     joinGroup(socket, db, data.gid);
   })
 
   socket.on('leaveGroup', (data) => {
-    console.log(getTimeStamp(), " user ", socket.uid, " leaveGroup");
+    logSocketMethodCall("leaveGroup");
 
     const query = "DELETE FROM ChatsDB.belongs_to WHERE uid = ? AND gid = ?;"
     if (socket.uid /* user signed in */) {
@@ -292,7 +300,8 @@ io.on('connection', (socket) => {
   })
 
   socket.on('createGroup', (data) => {
-    console.log(getTimeStamp(), " user ", socket.uid, " createGroup");
+    logSocketMethodCall("createGroup");
+
     const query = "INSERT INTO ChatsDB.groups SET ?;"
     if (socket.uid /* user signed in */) {
       new_gid = "gr-" + Math.random().toString(36).substr(2, 9);
