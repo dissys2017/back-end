@@ -2,12 +2,20 @@ const socket = io();
 
 
 socket.on('connect', () => {
-    let uid = window.prompt("User ID");
+    let username = window.prompt("Username");
     socket.emit('login', {
-        uid: parseInt(uid)
+        username
     }); 
 });
 
+socket.on('errNoUsername', () => {
+    let username = window.prompt("No username exists! Please re-enter.");
+    socket.emit('login', {
+        username
+    }); 
+})
+
+// Called after log in successful
 socket.on('loggedIn', () => {
     console.log("Logged In");
     socket.emit('getGroups');
@@ -15,18 +23,18 @@ socket.on('loggedIn', () => {
 
 socket.on('receivePreviousMessages', (data) => {
     $('#chat-messages').empty();
-    data.forEach(datum => {
-        if (datum.unread) {
-            $('#chat-messages').append($('<li class="message-unread">').text('User ' + datum.uid + "(Group " + datum.gid + "): " + datum.message));
+    data.forEach(d => {
+        if (d.unread) {
+            $('#chat-messages').append($('<li class="message-unread">').text('User ' + d.username + "(Group " + d.gid + "): " + d.message));
         } else {
-            $('#chat-messages').append($('<li class="message-read">').text('User ' + datum.uid + "(Group " + datum.gid + "): " + datum.message));
+            $('#chat-messages').append($('<li class="message-read">').text('User ' + d.username + "(Group " + d.gid + "): " + d.message));
         }
     });
 });
 
 socket.on('broadcastChatMessage', (data) => {
     // console.log(data);
-    $('#chat-messages').append($('<li>').text('User ' + data.uid + "(Group" + data.gid + "): " + data.message));
+    $('#chat-messages').append($('<li>').text('User ' + data.username + "(Group" + data.gid + "): " + data.message));
 });
 
 socket.on('receiveGroups', (data) => {
@@ -37,10 +45,14 @@ socket.on('receiveGroups', (data) => {
     data.forEach(group => {
         let $button = $('<button class="chatGroup" data-gid="' + group.gid + '")>' + group.groupname + "(" + group.gid + ")</button>");
         $button.click(() => {
+
+            // Fetches previous messages in new group
             socket.emit('getPreviousMessages', {
                 gid : group.gid,
                 limit: 100
             })
+
+            // Set the current gid to new gid
             $('#gid').val(group.gid);
         })
         let $li = $('<li>');
@@ -48,6 +60,9 @@ socket.on('receiveGroups', (data) => {
         $('#chat-groups').append($li);
     });
 })
+
+
+// ERRORS //
 
 socket.on('alreadySignedIn', (data) => {
     window.alert("Already Signed In!");

@@ -52,65 +52,36 @@ io.on('connection', (socket) => {
 
   socket.on('login', (data) => {
     console.log(getTimeStamp(), " user ", socket.uid, " login");
-    if (users.includes(data.uid)) {
-      socket.emit('alreadySignedIn');
-      socket.disconnect(true);
-    } else {
-      socket.uid = parseInt(data.uid);
-      socket.emit('loggedIn');
-      users.push(data.uid);
-    }
-  })
 
-  /* Get Message that is not read by this user 
-   * @param limit (optional, default 100) limit max messages returned by this call
-  */
- /*
-  socket.on('getUnreadMessages', (data) => {
-    console.log(getTimeStamp(), " user ", socket.uid, " getUnreadMessages");
-    
-    // Find most recent logout time of user 
-    let historyQuery = "SELECT ul.logouttime " +
-                       "FROM   users_logout ul " +
-                       "WHERE  ul.uid = ? " +
-                       "ORDER BY ul.logouttime DESC " +
-                       "LIMIT 1; ";
-    
-    data.limit = data.limit || 100;
+    const findUserIdQuery = "SELECT uid FROM ChatsDB.users WHERE username = ? LIMIT 1;"
 
-    db.query(historyQuery, socket.uid, (err, user_history) => {
+    db.query(findUserIdQuery, data.username, (err, results) => {
       if (err) {
         throw err;
       }
-      
-      console.log(user_history);
+      if (!results[0]) {
 
-      // Callback used for all cases below 
-      let callback = (err, newMessages) => {
-        if (err) {
-          throw err;
-        }
-        // use 'socket' instead of 'io' to send only to target user 
-        socket.emit('receiveUnreadMessages', newMessages)
-      }
+        // Cannot find username in database
 
-      if (!user_history[0] ) {
-        let newMessageQuery = "SELECT m.uid, m.gid, m.message, m.time " +
-                              "FROM   messages m " + 
-                              "LIMIT ?;";
-        db.query(newMessageQuery, data.limit, allback);
+        socket.emit('errNoUsername');
       } else {
 
-        // Find all new chat message for user 
-        let newMessageQuery = "SELECT m.uid, m.gid, m.message, m.time " +
-                              "FROM   messages m " +
-                              "WHERE  m.time >= ? " +
-                              "LIMIT ?;";
-        db.query(newMessageQuery, [user_history[0].logouttime, data.limit], callback);
+        // Found username in database
+
+        const uid = results[0]['uid'];
+
+        if (users.includes(uid)) {
+          socket.emit('alreadySignedIn');
+          socket.disconnect(true);
+
+        } else {
+          socket.uid = uid;
+          socket.emit('loggedIn');
+          users.push(uid);
+        }
       }
     })
   })
-  */
 
   /* Get All Messages
    * @param limit (optional, default 100) limit max messages returned by this call
@@ -118,6 +89,12 @@ io.on('connection', (socket) => {
   socket.on('getPreviousMessages', (data) => {
     console.log(getTimeStamp(), " user ", socket.uid, " getReadMessages");
     
+
+    if (!data.gid) {
+      console.log("[ERROR] No Group ID specified!");
+    }
+
+
     /* Find most recent logout time of user */
     let historyQuery = "SELECT ul.logouttime " +
                       "FROM   users_logout ul " +
@@ -137,15 +114,13 @@ io.on('connection', (socket) => {
         throw err;
       }
       
-      if (!data.gid) {
-        console.log("[ERROR] No Group ID specified!");
-      }
-
+      
       const logouttime = user_history[0] ? user_history[0].logouttime : null;
 
-      let newMessageQuery = "SELECT m.uid, m.gid, m.message, m.time " +
-                            "FROM   messages m " +
+      let newMessageQuery = "SELECT m.uid, u.username, m.gid, m.message, m.time " +
+                            "FROM   messages m, users u " +
                             "WHERE  m.gid = ? " + 
+                            "AND    m.uid = u.uid " + 
                             "LIMIT ?;";
       
       db.query(newMessageQuery, [data.gid, data.limit], (err, newMessages) => {
@@ -195,8 +170,18 @@ io.on('connection', (socket) => {
         }
       } else {
         console.log("Saved message: ", data);
-        /* Broadcast new Message to all users */
-        io.emit('broadcastChatMessage', messageObj)
+
+        const userIdToUsernameQuery = "SELECT username FROM ChatsDB.users WHERE uid = ? LIMIT 1;";
+        db.query(userIdToUsernameQuery, socket.uid, (err, results) => {
+          if (err) {
+            throw err;
+          }
+
+          messageObj.username = results[0]['username'];
+
+          /* Broadcast new Message to all users */
+          io.emit('broadcastChatMessage', messageObj)
+        });
       }
     })
 
