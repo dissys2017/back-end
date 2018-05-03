@@ -9,3 +9,11 @@ form {
 #chat-messages li {
     padding: 12px;
 }
+
+.message-read {
+    color: darkgreen;
+}
+
+.message-unread {
+    color: greenyellow;
+}

@@ -62,51 +62,111 @@ io.on('connection', (socket) => {
     }
   })
 
-  /* Get History Request => Return History chat */
-  socket.on('getHistory', () => {
-    console.log(getTimeStamp(), " user ", socket.uid, " getHistory");
+  /* Get Message that is not read by this user 
+   * @param limit (optional, default 100) limit max messages returned by this call
+  */
+ /*
+  socket.on('getUnreadMessages', (data) => {
+    console.log(getTimeStamp(), " user ", socket.uid, " getUnreadMessages");
     
-    /* Find most recent logout time of user */
+    // Find most recent logout time of user 
     let historyQuery = "SELECT ul.logouttime " +
                        "FROM   users_logout ul " +
                        "WHERE  ul.uid = ? " +
                        "ORDER BY ul.logouttime DESC " +
                        "LIMIT 1; ";
     
+    data.limit = data.limit || 100;
+
     db.query(historyQuery, socket.uid, (err, user_history) => {
       if (err) {
         throw err;
       }
       
-      /* Callback used for all cases below */
+      console.log(user_history);
+
+      // Callback used for all cases below 
       let callback = (err, newMessages) => {
         if (err) {
           throw err;
         }
-        for (let i = 0 ; i < newMessages.length ;i++) {
-
-          /* use 'socket' instead of 'io' to send only to target user */
-          socket.emit('receiveHistory', {
-            uid: newMessages[i].uid,
-            gid: newMessages[i].gid,
-            message: newMessages[i].message,
-            timestamp: newMessages[i].time
-          })
-        }
+        // use 'socket' instead of 'io' to send only to target user 
+        socket.emit('receiveUnreadMessages', newMessages)
       }
 
-      if (!user_history[0] /* User haven't logged out even once! */) {
+      if (!user_history[0] ) {
         let newMessageQuery = "SELECT m.uid, m.gid, m.message, m.time " +
-                              "FROM   messages m ";
-        db.query(newMessageQuery, callback);
+                              "FROM   messages m " + 
+                              "LIMIT ?;";
+        db.query(newMessageQuery, data.limit, allback);
       } else {
 
-        /* Find all new chat message for user */
+        // Find all new chat message for user 
         let newMessageQuery = "SELECT m.uid, m.gid, m.message, m.time " +
                               "FROM   messages m " +
-                              "WHERE  m.time < ?;";
-        db.query(newMessageQuery, user_history[0].logouttime, callback);
+                              "WHERE  m.time >= ? " +
+                              "LIMIT ?;";
+        db.query(newMessageQuery, [user_history[0].logouttime, data.limit], callback);
       }
+    })
+  })
+  */
+
+  /* Get All Messages
+   * @param limit (optional, default 100) limit max messages returned by this call
+  */
+  socket.on('getPreviousMessages', (data) => {
+    console.log(getTimeStamp(), " user ", socket.uid, " getReadMessages");
+    
+    /* Find most recent logout time of user */
+    let historyQuery = "SELECT ul.logouttime " +
+                      "FROM   users_logout ul " +
+                      "WHERE  ul.uid = ? " +
+                      "ORDER BY ul.logouttime DESC " +
+                      "LIMIT 1; ";
+    if (!data) {
+      data = {
+        limit: 100
+      }
+    } else {
+      data.limit = data.limit || 100;
+    }
+
+    db.query(historyQuery, socket.uid, (err, user_history) => {
+      if (err) {
+        throw err;
+      }
+      
+      if (!data.gid) {
+        console.log("[ERROR] No Group ID specified!");
+      }
+
+      const logouttime = user_history[0] ? user_history[0].logouttime : null;
+
+      let newMessageQuery = "SELECT m.uid, m.gid, m.message, m.time " +
+                            "FROM   messages m " +
+                            "WHERE  m.gid = ? " + 
+                            "LIMIT ?;";
+      
+      db.query(newMessageQuery, [data.gid, data.limit], (err, newMessages) => {
+        if (err) {
+          throw err;
+        } 
+        if (logouttime) {
+          newMessages.forEach(element => {
+            element.unread = (element.time > logouttime);
+          });
+        } else { // no logouttime == new user (haven't logged out yet)
+          newMessages.forEach(element => {
+            element.unread = true;
+          })
+        }
+        
+        /* use 'socket' instead of 'io' to send only to target user */
+        socket.emit('receivePreviousMessages', newMessages.sort((a, b) => {
+          return a.time - b.time; // order by time
+        }));
+      })
     })
   })
 
@@ -179,7 +239,7 @@ io.on('connection', (socket) => {
         socket.emit('receiveGroups', results);
       })
     } else {
-      // pass
+      socket.emit("errNotLoggedIn");
     }
   }
 
@@ -203,7 +263,7 @@ io.on('connection', (socket) => {
         }
       })
     } else {
-      // pass
+      socket.emit("errNotLoggedIn");
     }
   }
 
@@ -229,11 +289,20 @@ io.on('connection', (socket) => {
         if (err) {
           throw err;
         } 
+        
+        const countMembersInGroupQuery = "SELECT COUNT(uid) AS num FROM ChatsDB.belongs_to WHERE gid = ?;";
+        db.query(countMembersInGroupQuery, data.gid, (err, results) => {
+          if (err) {
+            throw err;
+          }
+          console.log("Members left = ", results[0]['num']);
+
+        });
 
         refreshGroups(socket, db);
       })
     } else {
-      // pass
+      socket.emit("errNotLoggedIn");
     }
   })
 
@@ -241,7 +310,8 @@ io.on('connection', (socket) => {
     console.log(getTimeStamp(), " user ", socket.uid, " createGroup");
     const query = "INSERT INTO ChatsDB.groups SET ?;"
     if (socket.uid /* user signed in */) {
-      new_gid = shortid.generate();
+      new_gid = "gr-" + Math.random().toString(36).substr(2, 9);
+      console.log(new_gid, " : ", data.groupname);
       db.query(query, {
         // creator: socket.uid,
         gid: new_gid,
@@ -254,7 +324,7 @@ io.on('connection', (socket) => {
         joinGroup(socket, db, new_gid);
       })
     } else {
-      // pass
+      socket.emit("errNotLoggedIn");
     }
   })
 

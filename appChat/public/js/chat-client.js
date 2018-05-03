@@ -9,13 +9,19 @@ socket.on('connect', () => {
 });
 
 socket.on('loggedIn', () => {
+    console.log("Logged In");
     socket.emit('getGroups');
-    socket.emit('getHistory');
 })
 
-socket.on('receiveHistory', (data) => {
-    // console.log(data);
-    $('#chat-messages').append($('<li>').text('User ' + data.uid + "(Group " + data.gid + "): " + data.message));
+socket.on('receivePreviousMessages', (data) => {
+    $('#chat-messages').empty();
+    data.forEach(datum => {
+        if (datum.unread) {
+            $('#chat-messages').append($('<li class="message-unread">').text('User ' + datum.uid + "(Group " + datum.gid + "): " + datum.message));
+        } else {
+            $('#chat-messages').append($('<li class="message-read">').text('User ' + datum.uid + "(Group " + datum.gid + "): " + datum.message));
+        }
+    });
 });
 
 socket.on('broadcastChatMessage', (data) => {
@@ -29,7 +35,17 @@ socket.on('receiveGroups', (data) => {
 
     // Add new groups
     data.forEach(group => {
-        $('#chat-groups').append($('<li>').text(group.groupname + "(" + group.gid + ")"));
+        let $button = $('<button class="chatGroup" data-gid="' + group.gid + '")>' + group.groupname + "(" + group.gid + ")</button>");
+        $button.click(() => {
+            socket.emit('getPreviousMessages', {
+                gid : group.gid,
+                limit: 100
+            })
+            $('#gid').val(group.gid);
+        })
+        let $li = $('<li>');
+        $li.append($button);
+        $('#chat-groups').append($li);
     });
 })
 
@@ -39,6 +55,10 @@ socket.on('alreadySignedIn', (data) => {
 
 socket.on('errUnknownGroup', () => {
     window.alert("Unknown Group Requested");
+})
+
+socket.on('errNotLoggedIn', () => {
+    window.alert("User is not logged in");
 })
 
 $('form').submit(function() {
@@ -75,4 +95,9 @@ $('#leaveGroup').click(() => {
     socket.emit('leaveGroup', {
         gid
     })
+})
+
+$('.chatGroup').click(() => {
+    const groupName = $(this).data('gid');
+    console.log("Clicked on button ", groupName);
 })
