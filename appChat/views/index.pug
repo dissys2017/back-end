@@ -9,30 +9,26 @@ html
   body
     #chat-app
       #chat.has-text-centered
-        section.hero.is-success
-          .hero-body
-            .container
-              h1.title Chat
-              h2 Chat Application with Node.js + socket.io
         section.section.chat-container
           .container
             .columns
-              .box.column.is-8.is-offset-2
+              .box.column.is-offset-1.is-2
+                .h2 Chim box
+                .chat-groups
+                  ul#chat-groups
+                button#createGroup ++
+                button#joinGroup + 
+                button#leaveGroup -
+              .box.column.is-8.is-offset-1
                 h2.title Chatbox
                 .chat-messages.has-text-left
                   ul#chat-messages
                 form
                   .field.has-addons
-                    p.control
-                      input(type='text', class='input', value='Chuck Norris', id='name')
-                    p.control.is-expanded
+                    .control
+                      input(type='text', class='input', value=1, id='gid' placeholder='Group ID')
+                    .control.is-expanded
                       input(type='text', class='input', placeholder='Try to say something', id='message')
-                    p.control
-                      input(type='submit', class='button is-success', value='Post')
-        footer
-          .container
-            .content
-              p
-                | Powered by
-                a(href='https://devahoy.com') DEVAHOY
+                    .control
+                      input(type='submit', class='button is-success', value='Send')
       script(src="/js/chat-client.js")

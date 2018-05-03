@@ -3,6 +3,8 @@ const app = express()
 const path = require('path')
 const mysql = require('mysql')
 const dateFormat = require('dateformat');
+const shortid = require('shortid');
+
 const APP_PORT = 5555
 
 // Database
@@ -12,9 +14,11 @@ const db = mysql.createConnection(dbConf)
 // Connect Database
 db.connect((err) => {
   if (err) {
-    throw err;
+    console.log(err);
+    console.log("Database not connected."); 
+  } else {
+    console.log("Database connected!");
   }
-  console.log("DataBase Connected!");
 })
 
 const server = app.listen(APP_PORT, () => {
@@ -34,86 +38,225 @@ app.set('views', path.join(__dirname, 'views'))
 app.set('view engine', 'pug')
 
 // Set Public Static Directory
-app.use(express.static('public'))
+app.use(express.static('public'));
 
 // Router
 app.get('/', (req, res) => {
   res.render('index')
 })
 
+
+users = []
 io.on('connection', (socket) => {
   console.log('a user connected')
 
+  socket.on('login', (data) => {
+    console.log(getTimeStamp(), " user ", socket.uid, " login");
+    if (users.includes(data.uid)) {
+      socket.emit('alreadySignedIn');
+      socket.disconnect(true);
+    } else {
+      socket.uid = parseInt(data.uid);
+      socket.emit('loggedIn');
+      users.push(data.uid);
+    }
+  })
+
   /* Get History Request => Return History chat */
   socket.on('getHistory', () => {
-    console.log('show history') 
+    console.log(getTimeStamp(), " user ", socket.uid, " getHistory");
     
     /* Find most recent logout time of user */
-    let historyQuery = "SELECT uh.logouttime " +
-                       "FROM   user_history uh " +
-                       "WHERE  uh.username = 'name' " +
-                       "ORDER BY uh.logouttime DESC " +
+    let historyQuery = "SELECT ul.logouttime " +
+                       "FROM   users_logout ul " +
+                       "WHERE  ul.uid = ? " +
+                       "ORDER BY ul.logouttime DESC " +
                        "LIMIT 1; ";
     
-    db.query(historyQuery, (err, user_history) => {
+    db.query(historyQuery, socket.uid, (err, user_history) => {
       if (err) {
         throw err;
       }
-      console.log(user_history[0].logouttime)
-
-      /* Find all new chat message for user */
-      let newMessageQuery = "SELECT ch.user,ch.message " +
-                            "FROM   chat_history ch " +
-                            "WHERE  ch.timestamp < '" + user_history[0].logouttime + "'; ";
-
-      db.query(newMessageQuery, (err, newMessages) => {
+      
+      /* Callback used for all cases below */
+      let callback = (err, newMessages) => {
         if (err) {
           throw err;
         }
         for (let i = 0 ; i < newMessages.length ;i++) {
-          console.log(newMessages[i].user + " : " + newMessages[i].message)
-          io.emit('receiveHistory',newMessages[i].user+" : "+newMessages[i].message)
+
+          /* use 'socket' instead of 'io' to send only to target user */
+          socket.emit('receiveHistory', {
+            uid: newMessages[i].uid,
+            gid: newMessages[i].gid,
+            message: newMessages[i].message,
+            timestamp: newMessages[i].time
+          })
         }
-      })
+      }
+
+      if (!user_history[0] /* User haven't logged out even once! */) {
+        let newMessageQuery = "SELECT m.uid, m.gid, m.message, m.time " +
+                              "FROM   messages m ";
+        db.query(newMessageQuery, callback);
+      } else {
+
+        /* Find all new chat message for user */
+        let newMessageQuery = "SELECT m.uid, m.gid, m.message, m.time " +
+                              "FROM   messages m " +
+                              "WHERE  m.time < ?;";
+        db.query(newMessageQuery, user_history[0].logouttime, callback);
+      }
     })
   })
 
+
   /* User send chat message => broadcast chat message to all user and store in Chat DB, Message Table */
-  socket.on('sendChatMessage', (message) => {
-    let arr = message.split(":");
+  socket.on('sendChatMessage', (data) => {
+    console.log(getTimeStamp(), " user ", socket.uid, " sendChatMessage");
     let timestamp = getTimeStamp();
-    let user = arr[0];
-    arr.shift();
-    let mes = arr.join(":");
-
-    console.log('user : ', user)
-    console.log('message : ', mes)
-
+    
+    const messageObj = {
+      uid: socket.uid,
+      gid: data.gid,
+      message: data.message,
+      time: timestamp
+    }
     /* Store message in database */
-    let history = "INSERT INTO chat_history(user,message,timestamp) " +
-		              "VALUE 	('" + user + "','" + mes + "','" + timestamp + "');";
-    db.query(history, (err, result) => {
+    let historyStoreQuery = "INSERT INTO messages " +
+                            "SET ?;";
+                  
+    db.query(historyStoreQuery, messageObj,(err, result) => {
       if (err) {
-        throw err;
+        if (err.code === 'ER_NO_REFERENCED_ROW_2') {
+          socket.emit('errUnknownGroup');
+        } else {
+          throw err;
+        }
+      } else {
+        console.log("Saved message: ", data);
+        /* Broadcast new Message to all users */
+        io.emit('broadcastChatMessage', messageObj)
       }
-      console.log("saved")
     })
 
-    /* Broadcast new Message to all users */
-    io.emit('broadcastChatMessage', user + " : " + mes)
+    
   })
 
   /* User Disconnects => Keep User Log in Chat DB, User History Table */
-  socket.on('disconnect',() =>{
-    console.log("logout ")
-    var timestamp = getTimeStamp()
-    var logout =  "UPDATE user_history "+
-                  "SET logouttime='"+timestamp+"'"+
-                  "WHERE username='name' ;"
-                  db.query(logout,function(err,result){
-      if (err) throw err;
-      console.log("saved logout")
-    })
+  socket.on('disconnect', () => {
+    
+    console.log(getTimeStamp(), " user ", socket.uid, " disconnect");
+    const logoutQuery = "INSERT INTO users_logout " +
+                        "SET ?;";
+    
+    if (socket.uid /* user sign in */) {
+      db.query(logoutQuery, {
+        uid: socket.uid,
+        logouttime: getTimeStamp()
+      }, (err, results) => {
+        if (err) throw err;
+
+        const index = users.indexOf(socket.uid);
+        if (index > -1) {
+          users.splice(index, 1);
+        }
+        console.log("saved logout")
+      })
+    } else { /* user hasn't even sign in */
+      // pass
+    }
   })
+
+  function refreshGroups(socket, db) {
+    const query = "SELECT B.gid, B.registertime, G.groupname FROM ChatsDB.belongs_to B, ChatsDB.groups G WHERE B.uid = ? AND G.gid = B.gid;";
+    if (socket.uid /* user signed in */) {
+      db.query(query, socket.uid, (err, results) => {
+        if (err) {
+          throw err;
+        } 
+
+        socket.emit('receiveGroups', results);
+      })
+    } else {
+      // pass
+    }
+  }
+
+  function joinGroup(socket, db, gid) {
+    const query = "INSERT INTO ChatsDB.belongs_to SET ?;";
+    if (socket.uid /* user signed in */) {
+      db.query(query, {
+        uid: socket.uid,
+        gid: gid
+      }, (err, results) => {
+        if (err) {
+          if (err.code === 'ER_DUP_ENTRY') {
+            refreshGroups(socket, db);
+          } else if (err.code === 'ER_NO_REFERENCED_ROW_2') {
+            socket.emit('errUnknownGroup');
+          } else {
+            throw err;
+          }
+        } else {
+          refreshGroups(socket, db);
+        }
+      })
+    } else {
+      // pass
+    }
+  }
+
+  socket.on('getGroups', () => {
+    console.log(getTimeStamp(), " user ", socket.uid, " getGroups");
+    refreshGroups(socket, db);
+  });
+
+  socket.on('joinGroup', (data) => {
+    console.log(getTimeStamp(), " user ", socket.uid, " joinGroup");
+    joinGroup(socket, db, data.gid);
+  })
+
+  socket.on('leaveGroup', (data) => {
+    console.log(getTimeStamp(), " user ", socket.uid, " leaveGroup");
+
+    const query = "DELETE FROM ChatsDB.belongs_to WHERE uid = ? AND gid = ?;"
+    if (socket.uid /* user signed in */) {
+      db.query(query, [
+        socket.uid,
+        data.gid
+      ], (err, results) => {
+        if (err) {
+          throw err;
+        } 
+
+        refreshGroups(socket, db);
+      })
+    } else {
+      // pass
+    }
+  })
+
+  socket.on('createGroup', (data) => {
+    console.log(getTimeStamp(), " user ", socket.uid, " createGroup");
+    const query = "INSERT INTO ChatsDB.groups SET ?;"
+    if (socket.uid /* user signed in */) {
+      new_gid = shortid.generate();
+      db.query(query, {
+        // creator: socket.uid,
+        gid: new_gid,
+        groupname: data.groupname
+      }, (err, results) => {
+        if (err) {
+          throw err;
+        } 
+        
+        joinGroup(socket, db, new_gid);
+      })
+    } else {
+      // pass
+    }
+  })
+
 })
 

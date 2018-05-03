@@ -1,6 +1,7 @@
 module.exports = {
-	host: "localhost",
-	user: "root",
-	password: "12345",
-	database: "chat_db"
+	host: "chats-db",
+	user: "monty",
+	password: "password",
+	database: "ChatsDB",
+	port: 3306
 }
