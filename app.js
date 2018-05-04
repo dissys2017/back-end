@@ -59,38 +59,52 @@ io.on('connection', (socket) => {
     // console.log(getTimeStamp(), " user ", socket.uid, " login");
     logSocketMethodCall("login");
 
-    const findUserIdQuery = "SELECT uid FROM ChatsDB.users WHERE username = ? LIMIT 1;"
+    if (!data.username) {
+      socket.emit('errNoUsername');
+    } else {
+      const findUserIdQuery = "SELECT uid FROM ChatsDB.users WHERE username = ? LIMIT 1;"
 
-    db.query(findUserIdQuery, data.username, (err, results) => {
-      if (err) {
-        throw err;
-      }
-      if (!results[0]) {
-
-        // Cannot find username in database
-
-        socket.emit('errNoUsername');
-      } else {
-
-        // Found username in database
-
-        const uid = results[0]['uid'];
-
-        if (users.includes(uid)) {
-          socket.emit('alreadySignedIn');
-          socket.disconnect(true);
-
-        } else {
-          socket.uid = uid;
-          socket.emit('loggedIn');
-          users.push(uid);
+      db.query(findUserIdQuery, data.username, (err, results) => {
+        if (err) {
+          throw err;
         }
-      }
-    })
+        if (!results[0]) {
+
+          // Cannot find username in database
+
+          socket.emit('errNoUsername');
+        } else {
+
+          // Found username in database
+
+          const uid = results[0]['uid'];
+
+          if (users.includes(uid)) {
+            socket.emit('alreadySignedIn');
+            socket.disconnect(true);
+
+          } else {
+            socket.uid = uid;
+            socket.emit('loggedIn');
+            users.push(uid);
+
+            const loginQuery = "INSERT INTO ChatsDB.users_login SET ?;";
+            db.query(loginQuery, {
+              uid: socket.uid
+            }, (err, results) => {
+              if (err) {
+                throw err;
+              }
+            })
+          }
+        }
+      })
+    }
   })
 
   /* Get All Messages
-   * @param limit (optional, default 100) limit max messages returned by this call
+   * Called once when opened the group for the first time
+   * @param limit (optional, default 200) limit max messages returned by this call
   */
   socket.on('getPreviousMessages', (data) => {
     logSocketMethodCall("getPreviousMessages");
@@ -102,54 +116,98 @@ io.on('connection', (socket) => {
 
 
     /* Find most recent logout time of user */
-    let historyQuery = "SELECT ul.logouttime " +
-                      "FROM   users_logout ul " +
-                      "WHERE  ul.uid = ? " +
-                      "ORDER BY ul.logouttime DESC " +
-                      "LIMIT 1; ";
+    let loginQuery = "SELECT ul.logintime " +
+                     "FROM   users_login ul " +
+                     "WHERE  ul.uid = ? " +
+                     "ORDER BY ul.logintime DESC " +
+                     "LIMIT 1; ";
     if (!data) {
       data = {
-        limit: 100
+        limit: 200
       }
     } else {
-      data.limit = data.limit || 100;
+      data.limit = data.limit || 200;
     }
 
-    db.query(historyQuery, socket.uid, (err, user_history) => {
+    db.query(loginQuery, socket.uid, (err, user_history) => {
       if (err) {
         throw err;
       }
       
-      
-      const logouttime = user_history[0] ? user_history[0].logouttime : null;
+      const logintime = user_history[0] ? user_history[0].logintime : null;
 
-      let newMessageQuery = "SELECT m.uid, u.username, m.gid, m.message, m.time " +
-                            "FROM   messages m, users u " +
-                            "WHERE  m.gid = ? " + 
-                            "AND    m.uid = u.uid " + 
-                            "LIMIT ?;";
-      
-      db.query(newMessageQuery, [data.gid, data.limit], (err, newMessages) => {
+      const breakQuery = "SELECT bf.breaktime FROM ChatsDB.breaks_from bf WHERE bf.uid = ? AND bf.gid = ? ORDER BY bf.breaktime DESC LIMIT 1;";
+
+      db.query(breakQuery, [socket.uid, data.gid], (err, breaktimes) => {
         if (err) {
           throw err;
-        } 
-        if (logouttime) {
-          newMessages.forEach(element => {
-            element.unread = (element.time > logouttime);
-          });
-        } else { // no logouttime == new user (haven't logged out yet)
-          newMessages.forEach(element => {
-            element.unread = true;
-          })
         }
+
+        const breaktime = breaktimes[0] ? breaktimes[0].breaktime : null;
         
-        /* use 'socket' instead of 'io' to send only to target user */
-        socket.emit('receivePreviousMessages', newMessages.sort((a, b) => {
-          return a.time - b.time; // order by time
-        }));
+        // TODO: may bug when using LIMIT and incremental
+        let newMessageQuery = "SELECT m.uid, u.username, m.gid, m.message, m.time " +
+                              "FROM   messages m, users u " +
+                              "WHERE  m.gid = ? " + 
+                              "AND    m.uid = u.uid " + 
+                              "LIMIT  ?;";
+      
+        db.query(newMessageQuery, [data.gid, data.limit], (err, newMessages) => {
+          if (err) {
+            throw err;
+          } 
+
+          let type = undefined;
+          
+          if (!breaktime) { // Just joined the group => send all as unread
+            newMessages.forEach(element => {
+              element.unread = true;
+            })      
+            type = 'all';
+          } else if (logintime > breaktime) { // no break from this group in this session yet => send all as unread + read
+            newMessages.forEach(element => {
+              element.unread = (element.time > logintime);
+            });
+            type = 'all';
+          } else { // has breaked from this group in this session
+            newMessages = newMessages.filter(element => element.time > breaktime);
+            newMessages.forEach(element => element.unread = true);
+            type = 'incremental';
+          }
+
+          /* use 'socket' instead of 'io' to send only to target user */
+          socket.emit('receivePreviousMessages', {
+            newMessages: newMessages.sort((a, b) => a.time - b.time),
+            type,
+            gid: data.gid
+          });
+        })
+
       })
+
+      
     })
   })
+
+  socket.on('breakFromGroup', (data) => {
+    logSocketMethodCall("breakFromGroup");
+
+    let breakQuery = "INSERT INTO breaks_from " +
+                     "SET ?;";
+    
+    db.query(breakQuery, {
+      uid: socket.uid,
+      gid: data.gid,
+      breaktime: getTimeStamp()
+    }, (err, results) => {
+      if(err) {
+        throw err;
+      }
+      console.log("User ", socket.uid, " broke from group ", data.gid);
+    });
+                          
+
+  });
 
 
   /* User send chat message => broadcast chat message to all user and store in Chat DB, Message Table */
@@ -167,7 +225,7 @@ io.on('connection', (socket) => {
     /* Store message in database */
     let historyStoreQuery = "INSERT INTO messages " +
                             "SET ?;";
-                  
+    
     db.query(historyStoreQuery, messageObj,(err, result) => {
       if (err) {
         if (err.code === 'ER_NO_REFERENCED_ROW_2') {
@@ -261,7 +319,6 @@ io.on('connection', (socket) => {
 
   socket.on('getGroups', () => {
     logSocketMethodCall("getGroups");
-
     refreshGroups(socket, db);
   });
 
@@ -303,7 +360,9 @@ io.on('connection', (socket) => {
     logSocketMethodCall("createGroup");
 
     const query = "INSERT INTO ChatsDB.groups SET ?;"
-    if (socket.uid /* user signed in */) {
+    if (!data.groupname) {
+      socket.emit("err")
+    } else if (socket.uid /* user signed in */) {
       new_gid = "gr-" + Math.random().toString(36).substr(2, 9);
       console.log(new_gid, " : ", data.groupname);
       db.query(query, {
