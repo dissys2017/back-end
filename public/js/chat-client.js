@@ -87,7 +87,7 @@ socket.on('receiveGroups', (data) => {
             socket.emit('getGroupMembers', {
                 gid: newGid
             })
-
+            
             // Change message to read
             messageStore[oldGid].forEach(m => {
                 m.unread = false;
