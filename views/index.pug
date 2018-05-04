@@ -12,14 +12,18 @@ html
         section.section.chat-container
           .container
             .columns
-              .box.column.is-offset-1.is-2
-                .h2 Groups box
+              .box.column.is-2
+                h2.title Groups box
                 .chat-groups
                   ul#chat-groups
                 button#createGroup ++
                 button#joinGroup + 
                 button#leaveGroup -
-              .box.column.is-8.is-offset-1
+              .box.column.is-2
+                h2.title Members box
+                .group-members
+                  ul#group-members
+              .box.column.is-6
                 h2.title Chatbox
                 .chat-messages.has-text-left
                   ul#chat-messages

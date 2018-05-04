@@ -253,10 +253,7 @@ io.on('connection', (socket) => {
     
   })
 
-  /* User Disconnects => Keep User Log in Chat DB, User History Table */
-  socket.on('disconnect', () => {
-    logSocketMethodCall("disconnect");
-
+  function logout() {
     const logoutQuery = "INSERT INTO users_logout " +
                         "SET ?;";
     
@@ -271,26 +268,63 @@ io.on('connection', (socket) => {
         if (index > -1) {
           users.splice(index, 1);
         }
+        socket.uid = null;
         console.log("saved logout")
       })
     } else { /* user hasn't even sign in */
       // pass
     }
+  }
+
+  socket.on('logout', (data) => {
+    logSocketMethodCall("logout");
+    logout();
   })
 
-  function refreshGroups(socket, db) {
+  /* User Disconnects => Keep User Log in Chat DB, User History Table */
+  socket.on('disconnect', () => {
+    logSocketMethodCall("disconnect");
+    logout();
+  })
+
+  function refreshGroups(socket, db, broadcast = true) {
     const query = "SELECT B.gid, B.registertime, G.groupname FROM ChatsDB.belongs_to B, ChatsDB.groups G WHERE B.uid = ? AND G.gid = B.gid;";
     if (socket.uid /* user signed in */) {
-      db.query(query, socket.uid, (err, results) => {
+      db.query(query, socket.uid, (err, groups) => {
         if (err) {
           throw err;
         } 
-
-        socket.emit('receiveGroups', results);
+        if (broadcast) {
+          io.emit('receiveGroups', {
+            groups
+          });
+        } else {
+          socket.emit('receiveGroups', {
+            groups
+          });
+        }
       })
     } else {
       socket.emit("errNotLoggedIn");
     }
+  }
+
+  function refreshMembers(socket, db, gid, broadcast = true) {
+    const memberQuery = "SELECT U.uid, U.username FROM ChatsDB.belongs_to B, ChatsDB.users U WHERE B.uid = U.uid AND B.gid = ?;";
+    db.query(memberQuery, gid, (err, members) => {
+      if (err) {
+        throw err;
+      }
+      if (broadcast) {
+        io.emit('receiveGroupMembers', {
+          members
+        })
+      } else {
+        socket.emit('receiveGroupMembers', {
+          members
+        })
+      }
+    })
   }
 
   function joinGroup(socket, db, gid) {
@@ -302,14 +336,13 @@ io.on('connection', (socket) => {
       }, (err, results) => {
         if (err) {
           if (err.code === 'ER_DUP_ENTRY') {
-            refreshGroups(socket, db);
+            // pass
           } else if (err.code === 'ER_NO_REFERENCED_ROW_2') {
             socket.emit('errUnknownGroup');
           } else {
             throw err;
           }
         } else {
-          refreshGroups(socket, db);
         }
       })
     } else {
@@ -319,40 +352,51 @@ io.on('connection', (socket) => {
 
   socket.on('getGroups', () => {
     logSocketMethodCall("getGroups");
-    refreshGroups(socket, db);
+    refreshGroups(socket, db, false);
   });
+
+  socket.on('getGroupMembers', (data) => {
+    logSocketMethodCall("getGroupMembers");
+    refreshMembers(socket, db, data.gid, false);
+  })
 
   socket.on('joinGroup', (data) => {
     logSocketMethodCall("joinGroup");
     joinGroup(socket, db, data.gid);
+    refreshGroups(socket, db, false);
+    refreshMembers(socket, db, data.gid, true);
   })
 
   socket.on('leaveGroup', (data) => {
     logSocketMethodCall("leaveGroup");
-
-    const query = "DELETE FROM ChatsDB.belongs_to WHERE uid = ? AND gid = ?;"
-    if (socket.uid /* user signed in */) {
-      db.query(query, [
-        socket.uid,
-        data.gid
-      ], (err, results) => {
-        if (err) {
-          throw err;
-        } 
-        
-        const countMembersInGroupQuery = "SELECT COUNT(uid) AS num FROM ChatsDB.belongs_to WHERE gid = ?;";
-        db.query(countMembersInGroupQuery, data.gid, (err, results) => {
+    if (!data.gid) {
+      socket.emit('errUnknownGroup');
+    } else {
+      const query = "DELETE FROM ChatsDB.belongs_to WHERE uid = ? AND gid = ?;"
+      if (socket.uid /* user signed in */) {
+        db.query(query, [
+          socket.uid,
+          data.gid
+        ], (err, results) => {
           if (err) {
             throw err;
-          }
-          console.log("Members left = ", results[0]['num']);
+          } 
+          
+          const countMembersInGroupQuery = "SELECT COUNT(uid) AS num FROM ChatsDB.belongs_to WHERE gid = ?;";
+          db.query(countMembersInGroupQuery, data.gid, (err, results) => {
+            if (err) {
+              throw err;
+            }
+            console.log("Members left = ", results[0]['num']);
 
-        });
+          });
 
-        refreshGroups(socket, db);
-      })
-    } else {
-      socket.emit("errNotLoggedIn");
+          refreshGroups(socket, db, false);
+          refreshMembers(socket, db, data.gid, true);
+        })
+      } else {
+        socket.emit("errNotLoggedIn");
+      }
     }
   })
 
@@ -375,6 +419,8 @@ io.on('connection', (socket) => {
         } 
         
         joinGroup(socket, db, new_gid);
+        refreshGroups(socket, db, true);
+        refreshMembers(socket, db, new_gid, true);
       })
     } else {
       socket.emit("errNotLoggedIn");

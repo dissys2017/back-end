@@ -62,7 +62,7 @@ socket.on('receiveGroups', (data) => {
     $('#chat-groups').empty();
     
     // Add new groups
-    data.forEach(group => {
+    data.groups.forEach(group => {
         let $button = $('<button class="chatGroup" data-gid="' + group.gid + '")>' + group.groupname + "(" + group.gid + ")</button>");
         $button.click(() => {
 
@@ -82,6 +82,17 @@ socket.on('receiveGroups', (data) => {
 
             // Set the current gid to new gid
             $('#gid').val(newGid);
+            
+            // Update Group Member List
+            socket.emit('getGroupMembers', {
+                gid: newGid
+            })
+
+            // Change message to read
+            messageStore[oldGid].forEach(m => {
+                m.unread = false;
+            })
+
         })
         let $li = $('<li>');
         $li.append($button);
@@ -93,6 +104,17 @@ socket.on('receiveGroups', (data) => {
         }
     });
 })
+
+socket.on('receiveGroupMembers', (data) => {
+    // Clear Members Box
+    $('#group-members').empty();
+
+    // Set Members Box
+    data.members.forEach(member => {
+        $('#group-members').append($('<li>').text('User ' + member.username));
+    })
+})
+
 
 
 // ERRORS //
@@ -149,3 +171,4 @@ $('.chatGroup').click(() => {
     const groupName = $(this).data('gid');
     console.log("Clicked on button ", groupName);
 })
+
