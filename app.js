@@ -55,6 +55,33 @@ io.on('connection', (socket) => {
     console.log(logMessage);
   }
 
+  // Register Username and Password
+  socket.on('register',(data)=>{
+
+    const checkUsername = "SELECT username "+
+                          "FROM   ChatsDB.users"+
+                          "WHERE  username = ?;";
+
+    db.query(checkUsername, data.username , (err,results)=>{
+      if(err){
+        throw err;
+      }
+      if(result[0]){
+        socket.emit('registerFail');
+      }
+      else{
+        const registerToDB = "INSERT INTO users"+
+                              "SET ? ;";
+        db.query(registerToDB, data, (err,results)=>{
+          if(err){
+            throw err ;
+          }
+          socket.emit('registerSuccess');
+        })
+      }
+    })
+  })
+
   socket.on('login', (data) => {
     // console.log(getTimeStamp(), " user ", socket.uid, " login");
     logSocketMethodCall("login");
