@@ -3,6 +3,7 @@ const app = express()
 const path = require('path')
 const mysql = require('mysql')
 const dateFormat = require('dateformat');
+const moment = require('moment');
 
 const APP_PORT = 5555
 
@@ -27,8 +28,7 @@ const server = app.listen(APP_PORT, () => {
 const io = require('socket.io').listen(server);
 
 function getTimeStamp() {
-  let now = new Date();
-  let output = dateFormat(now, "yyyy-mm-dd hh:MM:ss.l");
+  output = moment().format("YYYY-MM-DD HH:mm:ss.SSS")
   return output;
 }
 
@@ -90,11 +90,25 @@ io.on('connection', (socket) => {
 
             const loginQuery = "INSERT INTO ChatsDB.users_login SET ?;";
             db.query(loginQuery, {
-              uid: socket.uid
+              uid: socket.uid,
+              logintime: getTimeStamp()
             }, (err, results) => {
               if (err) {
                 throw err;
               }
+              /*
+              const findUserRoomsQuery = "SELECT gid FROM ChatsDB.belongs_to WHERE uid = ?;";
+              db.query(findUserRoomsQuery, socket.uid, (err, gids) => {
+                if (err) {
+                  throw err;
+                }
+                console.log(gids);
+
+                gids.forEach(gid => {
+                  socket.join(gid.gid);
+                });
+              })
+              */
             })
           }
         }
@@ -136,52 +150,70 @@ io.on('connection', (socket) => {
       
       const logintime = user_history[0] ? user_history[0].logintime : null;
 
-      const breakQuery = "SELECT bf.breaktime FROM ChatsDB.breaks_from bf WHERE bf.uid = ? AND bf.gid = ? ORDER BY bf.breaktime DESC LIMIT 1;";
+      const logoutQuery = "SELECT ul.logouttime " +
+                          "FROM   users_logout ul " +
+                          "WHERE  ul.uid = ? " +
+                          "ORDER BY ul.logouttime DESC " +
+                          "LIMIT 1; ";
 
-      db.query(breakQuery, [socket.uid, data.gid], (err, breaktimes) => {
+      db.query(logoutQuery, socket.uid, (err, logouttimes) => {
         if (err) {
           throw err;
         }
 
-        const breaktime = breaktimes[0] ? breaktimes[0].breaktime : null;
+        const logouttime = logouttimes[0] ? logouttimes[0].logouttime : null;
         
-        // TODO: may bug when using LIMIT and incremental
-        let newMessageQuery = "SELECT m.uid, u.username, m.gid, m.message, m.time " +
-                              "FROM   messages m, users u " +
-                              "WHERE  m.gid = ? " + 
-                              "AND    m.uid = u.uid " + 
-                              "LIMIT  ?;";
-      
-        db.query(newMessageQuery, [data.gid, data.limit], (err, newMessages) => {
+        const breakQuery = "SELECT bf.breaktime FROM ChatsDB.breaks_from bf WHERE bf.uid = ? AND bf.gid = ? ORDER BY bf.breaktime DESC LIMIT 1;";
+
+        db.query(breakQuery, [socket.uid, data.gid], (err, breaktimes) => {
           if (err) {
             throw err;
-          } 
-
-          let type = undefined;
-          
-          if (!breaktime) { // Just joined the group => send all as unread
-            newMessages.forEach(element => {
-              element.unread = true;
-            })      
-            type = 'all';
-          } else if (logintime > breaktime) { // no break from this group in this session yet => send all as unread + read
-            newMessages.forEach(element => {
-              element.unread = (element.time > logintime);
-            });
-            type = 'all';
-          } else { // has breaked from this group in this session
-            newMessages = newMessages.filter(element => element.time > breaktime);
-            newMessages.forEach(element => element.unread = true);
-            type = 'incremental';
           }
 
-          /* use 'socket' instead of 'io' to send only to target user */
-          socket.emit('receivePreviousMessages', {
-            newMessages: newMessages.sort((a, b) => a.time - b.time),
-            type,
-            gid: data.gid
-          });
+          const breaktime = breaktimes[0] ? breaktimes[0].breaktime : null;
+          
+          // TODO: may bug when using LIMIT and incremental
+          let newMessageQuery = "SELECT m.uid, u.username, m.gid, m.message, m.time " +
+                                "FROM   messages m, users u " +
+                                "WHERE  m.gid = ? " + 
+                                "AND    m.uid = u.uid " + 
+                                "LIMIT  ?;";
+        
+          db.query(newMessageQuery, [data.gid, data.limit], (err, newMessages) => {
+            if (err) {
+              throw err;
+            } 
+
+            let type = undefined;
+
+            console.log("breaktime: ", breaktime, ", logintime: ", logintime, ' => ', (breaktime < logintime ? 'all' : 'incremental') );
+            
+            if (!breaktime) { // Just joined the group => send all as unread
+              newMessages.forEach(element => {
+                element.unread = true;
+              })      
+              type = 'all';
+            } else if (logintime > breaktime) { // no break from this group in this session yet => send all as unread + read
+              newMessages.forEach(element => {
+                element.unread = (element.time >= logouttime);
+              });
+              type = 'all';
+            } else { // has breaked from this group in this session
+              newMessages = newMessages.filter(element => (element.time >= breaktime));
+              newMessages.forEach(element => element.unread = true);
+              type = 'incremental';
+            }
+
+            /* use 'socket' instead of 'io' to send only to target user */
+            socket.emit('receivePreviousMessages', {
+              newMessages: newMessages.sort((a, b) => a.time - b.time),
+              type,
+              gid: data.gid
+            });
+          })
+
         })
+
 
       })
 
@@ -206,21 +238,29 @@ io.on('connection', (socket) => {
       console.log("User ", socket.uid, " broke from group ", data.gid);
     });
                           
-
   });
 
+  socket.on('joinRoom', (data) => {
+    logSocketMethodCall(`joinRoom ${data.gid}`);
+    let gid = data.gid
+    socket.join(gid);
+  })
+
+  socket.on('leaveRoom', (data) => {
+    logSocketMethodCall(`leaveRoom ${data.gid}`);
+    let gid = data.gid
+    socket.leave(gid);
+  })
 
   /* User send chat message => broadcast chat message to all user and store in Chat DB, Message Table */
   socket.on('sendChatMessage', (data) => {
     logSocketMethodCall("sendChatMessage");
-
-    let timestamp = getTimeStamp();
     
     const messageObj = {
       uid: socket.uid,
       gid: data.gid,
       message: data.message,
-      time: timestamp
+      time: getTimeStamp()
     }
     /* Store message in database */
     let historyStoreQuery = "INSERT INTO messages " +
@@ -244,8 +284,10 @@ io.on('connection', (socket) => {
 
           messageObj.username = results[0]['username'];
 
+          console.log(socket.rooms);
+
           /* Broadcast new Message to all users */
-          io.emit('broadcastChatMessage', messageObj)
+          io.sockets.to(data.gid).emit('broadcastChatMessage', messageObj)
         });
       }
     })
@@ -329,7 +371,9 @@ io.on('connection', (socket) => {
 
   function joinGroup(socket, db, gid) {
     const query = "INSERT INTO ChatsDB.belongs_to SET ?;";
-    if (socket.uid /* user signed in */) {
+    if (!gid) {
+      socket.emit('errUnknownGroup');
+    } else if (socket.uid /* user signed in */) {
       db.query(query, {
         uid: socket.uid,
         gid: gid
@@ -343,6 +387,8 @@ io.on('connection', (socket) => {
             throw err;
           }
         } else {
+          // Joined room
+          socket.join(gid);
         }
       })
     } else {
@@ -362,9 +408,13 @@ io.on('connection', (socket) => {
 
   socket.on('joinGroup', (data) => {
     logSocketMethodCall("joinGroup");
-    joinGroup(socket, db, data.gid);
-    refreshGroups(socket, db, false);
-    refreshMembers(socket, db, data.gid, true);
+    if (data.gid) {
+      joinGroup(socket, db, data.gid);
+      refreshGroups(socket, db, false);
+      refreshMembers(socket, db, data.gid, true);
+    } else {
+      socket.emit('errUnknownGroup');
+    }
   })
 
   socket.on('leaveGroup', (data) => {
@@ -388,7 +438,7 @@ io.on('connection', (socket) => {
               throw err;
             }
             console.log("Members left = ", results[0]['num']);
-
+            socket.leave(data.gid);
           });
 
           refreshGroups(socket, db, false);
@@ -419,7 +469,7 @@ io.on('connection', (socket) => {
         } 
         
         joinGroup(socket, db, new_gid);
-        refreshGroups(socket, db, true);
+        refreshGroups(socket, db, false);
         refreshMembers(socket, db, new_gid, true);
       })
     } else {

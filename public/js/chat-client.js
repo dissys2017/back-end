@@ -53,7 +53,7 @@ socket.on('receivePreviousMessages', (data) => {
 
 socket.on('broadcastChatMessage', (data) => {
     // console.log(data);
-    $('#chat-messages').append($('<li>').text('User ' + data.username + "(Group" + data.gid + "): " + data.message));
+    $('#chat-messages').append($('<li class="message-test1">').text('User ' + data.username + "(Group" + data.gid + "): " + data.message));
     messageStore[data.gid].push(data);
 });
 
@@ -66,18 +66,15 @@ socket.on('receiveGroups', (data) => {
         let $button = $('<button class="chatGroup" data-gid="' + group.gid + '")>' + group.groupname + "(" + group.gid + ")</button>");
         $button.click(() => {
 
-            let oldGid = $('#gid').val();
-            let newGid = group.gid;
+            const oldGid = $('#gid').val();
+            const newGid = group.gid;
+
+            console.log(`old GID = ${oldGid}, new GID = ${newGid}`);
 
             // Fetches previous messages in new group 
             socket.emit('getPreviousMessages', {
                 gid : newGid,
                 limit: 100
-            })
-
-            // Break from current group. Must be after fetch previous message or the 'break' would cause unexpected behavior.
-            socket.emit('breakFromGroup', {
-                gid: oldGid
             })
 
             // Set the current gid to new gid
@@ -87,11 +84,30 @@ socket.on('receiveGroups', (data) => {
             socket.emit('getGroupMembers', {
                 gid: newGid
             })
-            
-            // Change message to read
-            messageStore[oldGid].forEach(m => {
-                m.unread = false;
+
+            // If there is an existing GID
+            if (oldGid) {
+                // Break from current group. Must be after fetch previous message or the 'break' would cause unexpected behavior.
+                socket.emit('breakFromGroup', {
+                    gid: oldGid
+                })
+
+                // Change message to read
+                messageStore[oldGid].forEach(m => {
+                    m.unread = false;
+                })
+
+                // Leave Old room
+                socket.emit('leaveRoom', {
+                    gid: oldGid
+                })
+            }
+
+            // Join New room
+            socket.emit('joinRoom', {
+                gid: newGid
             })
+
 
         })
         let $li = $('<li>');
