@@ -203,7 +203,7 @@ io.on('connection', (socket) => {
               newMessages.forEach(element => element.unread = true);
               type = 'incremental';
             }
-
+            console.log(newMessages);
             /* use 'socket' instead of 'io' to send only to target user */
             socket.emit('receivePreviousMessages', {
               newMessages: newMessages.sort((a, b) => a.time - b.time),
