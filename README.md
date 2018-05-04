@@ -1,5 +1,5 @@
 # Backend for Chats Project
-Back-end server running on port 5555.
+This repository provides the backend engine for the chat application. The protocol is based on `socket.io` and `websockets`. The server exposes its service on port 5555. This backend server requires the `Chats DB` database server to be up and running before starting this backend server.
 
 ## Run without Docker
 
