@@ -59,20 +59,23 @@ io.on('connection', (socket) => {
   socket.on('register',(data)=>{
 
     const checkUsername = "SELECT username "+
-                          "FROM   ChatsDB.users"+
-                          "WHERE  username = ?;";
+                          "FROM   ChatsDB.users "+
+                          "WHERE  username = ? ;";
 
     db.query(checkUsername, data.username , (err,results)=>{
       if(err){
         throw err;
       }
-      if(result[0]){
+      if(results[0]){
         socket.emit('registerFail');
       }
       else{
-        const registerToDB = "INSERT INTO users"+
+        const registerToDB = "INSERT INTO users "+
                               "SET ? ;";
-        db.query(registerToDB, data, (err,results)=>{
+        db.query(registerToDB, {
+          username: data.username,
+          password: data.password 
+        }, (err,results)=>{
           if(err){
             throw err ;
           }
