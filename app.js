@@ -5,6 +5,7 @@ const mysql = require('mysql')
 const dateFormat = require('dateformat');
 const moment = require('moment');
 
+
 const APP_PORT = 5555
 
 // Database
@@ -56,10 +57,10 @@ io.on('connection', (socket) => {
   }
 
   // Register Username and Password
-  socket.on('register',(data)=>{
+  socket.on('register',(data) => {
 
-    const checkUsername = "SELECT username "+
-                          "FROM   ChatsDB.users "+
+    const checkUsername = "SELECT username " +
+                          "FROM   ChatsDB.users " + 
                           "WHERE  username = ? ;";
 
     db.query(checkUsername, data.username , (err,results)=>{
@@ -115,7 +116,10 @@ io.on('connection', (socket) => {
 
           } else {
             socket.uid = uid;
-            socket.emit('loggedIn');
+            socket.emit('loggedIn', {
+              uid,
+              username: data.username
+            });
             users.push(uid);
 
             const loginQuery = "INSERT INTO ChatsDB.users_login SET ?;";
@@ -158,10 +162,12 @@ io.on('connection', (socket) => {
       console.log("[ERROR] No Group ID specified!");
     }
 
+    socket.uid = socket.uid || data.uid;
+
     if (!socket.uid) {
       socket.emit('errNotLoggedIn');
     }
-
+    
 
     /* Find most recent logout time of user */
     let loginQuery = "SELECT ul.logintime " +
@@ -198,7 +204,7 @@ io.on('connection', (socket) => {
         const logouttime = logouttimes[0] ? logouttimes[0].logouttime : null;
         
         const breakQuery = "SELECT bf.breaktime FROM ChatsDB.breaks_from bf WHERE bf.uid = ? AND bf.gid = ? ORDER BY bf.breaktime DESC LIMIT 1;";
-
+        getTimeStamp
         db.query(breakQuery, [socket.uid, data.gid], (err, breaktimes) => {
           if (err) {
             throw err;
@@ -212,7 +218,7 @@ io.on('connection', (socket) => {
                                 "WHERE  m.gid = ? " + 
                                 "AND    m.uid = u.uid " + 
                                 "LIMIT  ?;";
-        
+          
           db.query(newMessageQuery, [data.gid, data.limit], (err, newMessages) => {
             if (err) {
               throw err;
@@ -257,6 +263,8 @@ io.on('connection', (socket) => {
   socket.on('breakFromGroup', (data) => {
     logSocketMethodCall("breakFromGroup");
 
+    socket.uid = socket.uid || data.uid;
+
     let breakQuery = "INSERT INTO breaks_from " +
                      "SET ?;";
     
@@ -279,12 +287,15 @@ io.on('connection', (socket) => {
 
   socket.on('joinRoom', (data) => {
     logSocketMethodCall(`joinRoom ${data.gid}`);
+    
+    socket.uid = socket.uid || data.uid;
     let gid = data.gid
     socket.join(gid);
   })
 
   socket.on('leaveRoom', (data) => {
     logSocketMethodCall(`leaveRoom ${data.gid}`);
+    socket.uid = socket.uid || data.uid;
     let gid = data.gid
     socket.leave(gid);
   })
@@ -292,12 +303,13 @@ io.on('connection', (socket) => {
   /* User send chat message => broadcast chat message to all user and store in Chat DB, Message Table */
   socket.on('sendChatMessage', (data) => {
     logSocketMethodCall("sendChatMessage");
+    socket.uid = socket.uid || data.uid;
     
     const messageObj = {
       uid: socket.uid,
       gid: data.gid,
       message: data.message,
-      time: getTimeStamp()
+      // time: getTimeStamp()
     }
     /* Store message in database */
     let historyStoreQuery = "INSERT INTO messages " +
@@ -357,12 +369,14 @@ io.on('connection', (socket) => {
 
   socket.on('logout', (data) => {
     logSocketMethodCall("logout");
+    socket.uid = socket.uid || data.uid;
     logout();
   })
 
   /* User Disconnects => Keep User Log in Chat DB, User History Table */
   socket.on('disconnect', () => {
     logSocketMethodCall("disconnect");
+    socket.uid = socket.uid || data.uid;
     logout();
   })
 
@@ -413,11 +427,12 @@ io.on('connection', (socket) => {
     } else if (socket.uid /* user signed in */) {
       db.query(query, {
         uid: socket.uid,
-        gid: gid
+        gid: gid,
+        registertime: getTimeStamp()
       }, (err, results) => {
         if (err) {
           if (err.code === 'ER_DUP_ENTRY') {
-            // pass
+            // passgetTimeStamp
           } else if (err.code === 'ER_NO_REFERENCED_ROW_2') {
             socket.emit('errUnknownGroup');
           } else {
@@ -435,16 +450,19 @@ io.on('connection', (socket) => {
 
   socket.on('getGroups', () => {
     logSocketMethodCall("getGroups");
+    socket.uid = socket.uid || data.uid;
     refreshGroups(socket, db, false);
   });
 
   socket.on('getGroupMembers', (data) => {
     logSocketMethodCall("getGroupMembers");
+    socket.uid = socket.uid || data.uid;
     refreshMembers(socket, db, data.gid, false);
   })
 
   socket.on('joinGroup', (data) => {
     logSocketMethodCall("joinGroup");
+    socket.uid = socket.uid || data.uid;
     if (data.gid) {
       joinGroup(socket, db, data.gid);
       refreshGroups(socket, db, false);
@@ -456,6 +474,7 @@ io.on('connection', (socket) => {
 
   socket.on('leaveGroup', (data) => {
     logSocketMethodCall("leaveGroup");
+    socket.uid = socket.uid || data.uid;
     if (!data.gid) {
       socket.emit('errUnknownGroup');
     } else {
@@ -489,6 +508,7 @@ io.on('connection', (socket) => {
 
   socket.on('createGroup', (data) => {
     logSocketMethodCall("createGroup");
+    socket.uid = socket.uid || data.uid;
 
     const query = "INSERT INTO ChatsDB.groups SET ?;"
     if (!data.groupname) {
