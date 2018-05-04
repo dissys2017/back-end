@@ -50,7 +50,7 @@ io.on('connection', (socket) => {
   console.log('a user connected')
 
   function logSocketMethodCall(name) {
-    let address = socket.conn.remoteAddress;
+    let address = socket.handshake.headers["x-real-ip"] || socket.conn.remoteAddress;
     let logMessage = "\x1b[33m[" + getTimeStamp() + "]\x1b[0m \x1b[36m(user " + socket.uid + ")\x1b[0m \x1b[32m(" + address + ")\x1b[0m " + name;
     console.log(logMessage);
   }
@@ -158,6 +158,10 @@ io.on('connection', (socket) => {
       console.log("[ERROR] No Group ID specified!");
     }
 
+    if (!socket.uid) {
+      socket.emit('errNotLoggedIn');
+    }
+
 
     /* Find most recent logout time of user */
     let loginQuery = "SELECT ul.logintime " +
@@ -233,7 +237,6 @@ io.on('connection', (socket) => {
               newMessages.forEach(element => element.unread = true);
               type = 'incremental';
             }
-            console.log(newMessages);
             /* use 'socket' instead of 'io' to send only to target user */
             socket.emit('receivePreviousMessages', {
               newMessages: newMessages.sort((a, b) => a.time - b.time),
@@ -257,17 +260,21 @@ io.on('connection', (socket) => {
     let breakQuery = "INSERT INTO breaks_from " +
                      "SET ?;";
     
-    db.query(breakQuery, {
-      uid: socket.uid,
-      gid: data.gid,
-      breaktime: getTimeStamp()
-    }, (err, results) => {
-      if(err) {
-        throw err;
-      }
-      console.log("User ", socket.uid, " broke from group ", data.gid);
-    });
-                          
+    if (data.gid) {
+      db.query(breakQuery, {
+        uid: socket.uid,
+        gid: data.gid,
+        breaktime: getTimeStamp()
+      }, (err, results) => {
+        if(err) {
+          throw err;
+        }
+        console.log("User ", socket.uid, " broke from group ", data.gid);
+      });
+    } else {
+      socket.emit('errUnknownGroup');
+    }
+                            
   });
 
   socket.on('joinRoom', (data) => {
